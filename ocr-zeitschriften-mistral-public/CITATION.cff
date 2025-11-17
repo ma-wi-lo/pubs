@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
 type: software
 title: "OCR Pipeline for Historical Print Periodicals using Mistral AI"
-version: 1.0.0
+version: 1.0.2
 date-released: 2025-11-16
 abstract: "A Jupyter-based OCR pipeline for batch processing scanned historical periodicals using the Mistral OCR Vision API. Features include structured text extraction with layout preservation, automatic PDF splitting for large files, SQLite checkpoint system for resumability, and multiple output formats (Markdown, Plain Text, JSON)."
 repository-code: "https://github.com/ma-wi-lo/pubs"
@@ -37,5 +37,5 @@ references:
     url: "https://mistral.ai/"
 identifiers:
   - type: doi
-    value: "10.5281/zenodo.17631913"
+    value: "10.5281/zenodo.17631912"
     description: "Zenodo DOI (to be assigned upon publication)"

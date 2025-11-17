@@ -1,6 +1,6 @@
 # OCR Pipeline for Historical Print Periodicals using Mistral AI
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17631913.svg)](https://doi.org/10.5281/zenodo.17631913)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17631912.svg)](https://doi.org/10.5281/zenodo.17631912)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **A Jupyter-based OCR pipeline for batch processing scanned periodicals using the Mistral OCR API**
@@ -228,7 +228,7 @@ If you use this pipeline in your research, please cite:
   title = {OCR Pipeline for Historical Print Periodicals using Mistral AI},
   year = {2025},
   version = {1.0.0},
-  doi = {10.5281/zenodo.17631913},
+  doi = {10.5281/zenodo.17631912},
   url = {https://github.com/ma-wi-lo/pubs}
 }
 ```
