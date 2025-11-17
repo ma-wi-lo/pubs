@@ -1,0 +1,30 @@
+# OCR-Zeitschriften-Mistral Requirements
+
+# Mistral AI SDK
+mistralai>=1.0.0
+
+# Image Processing
+Pillow>=10.0.0
+pdf2image>=1.16.0
+
+# PDF Handling (Alternative)
+PyMuPDF>=1.23.0
+
+# Data Management
+pandas>=2.0.0
+
+# Environment Variables
+python-dotenv>=1.0.0
+
+# HTTP Requests
+requests>=2.31.0
+
+# Progress Bars (optional)
+tqdm>=4.66.0
+
+# Notebook Support
+jupyter>=1.0.0
+ipykernel>=6.25.0
+
+# Logging & Utils
+colorlog>=6.7.0  # Optional: Farbige Logs

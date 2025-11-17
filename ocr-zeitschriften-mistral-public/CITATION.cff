@@ -1,0 +1,41 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "OCR Pipeline for Historical Print Periodicals using Mistral AI"
+version: 1.0.0
+date-released: 2025-01-16
+abstract: "A Jupyter-based OCR pipeline for batch processing scanned historical periodicals using the Mistral OCR Vision API. Features include structured text extraction with layout preservation, automatic PDF splitting for large files, SQLite checkpoint system for resumability, and multiple output formats (Markdown, Plain Text, JSON)."
+repository-code: "https://github.com/ma-wi-lo/pubs"
+license: MIT
+keywords:
+  - OCR
+  - Optical Character Recognition
+  - Digital Humanities
+  - Historical Periodicals
+  - Mistral AI
+  - Jupyter Notebook
+  - Python
+  - Document Analysis
+  - Text Extraction
+  - Reproducible Research
+  - Open Science
+authors:
+  - family-names: "Lorenz"
+    given-names: "Marco"
+    affiliation: "BBF | Research Library for the History of Education in Berlin"
+    orcid: "https://orcid.org/0000-0002-0903-2100"
+contact:
+  - family-names: "Lorenz"
+    given-names: "Marco"
+    affiliation: "BBF | Research Library for the History of Education in Berlin"
+    email: "m.lorenz@dipf.de"
+references:
+  - type: software
+    title: "Mistral AI SDK"
+    authors:
+      - name: "Mistral AI"
+    url: "https://mistral.ai/"
+identifiers:
+  - type: doi
+    value: "10.5281/zenodo.XXXXXX"
+    description: "Zenodo DOI (to be assigned upon publication)"
