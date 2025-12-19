@@ -21,9 +21,8 @@ ocr-zeitschriften-mistral-public/
 │   ├── output/             # OCR results (.md, .txt, .json)
 │   └── tracking/           # SQLite database + temporary PDF chunks
 ├── docs/
-│   ├── ARCHITECTURE.md     # This file
-│   ├── CODING_INSTRUCTIONS.md  # Development guidelines
-│   └── PIPELINE_REVIEW.md  # Code review documentation
+│   ├── ARCHITECTURE.md     # This file (system architecture)
+│   └── LLM_WORKFLOW.md     # API workflow & post-processing
 ├── notebooks/
 │   ├── ocr_pipeline.ipynb  # Main processing notebook (4 cells)
 │   └── utils.py            # Helper functions (~1100 lines)
