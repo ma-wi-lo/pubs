@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-**Purpose**: Full-text OCR of historical print periodicals with structural text analysis using Mistral Pixtral Vision AI
+**Purpose**: Full-text OCR of historical print periodicals using the Mistral OCR API (`mistral-ocr-latest`)
 
-**Version**: 1.0.0
+**Version**: 1.1.0
 
 **Institution**: BBF | Research Library for the History of Education in Berlin
 
@@ -17,16 +17,18 @@
 ```
 ocr-zeitschriften-mistral-public/
 ├── data/
-│   ├── input/              # Scans (PDF, JPG) - not versioned
-│   ├── output/             # OCR results (.txt, .md, .json)
-│   └── tracking/           # SQLite state management
+│   ├── input/              # Source files (PDF, JPG, PNG) - not versioned
+│   ├── output/             # OCR results (.md, .txt, .json)
+│   └── tracking/           # SQLite database + temporary PDF chunks
 ├── docs/
 │   ├── ARCHITECTURE.md     # This file
-│   └── LLM_WORKFLOW.md     # Prompt engineering & workflow
+│   ├── CODING_INSTRUCTIONS.md  # Development guidelines
+│   └── PIPELINE_REVIEW.md  # Code review documentation
 ├── notebooks/
-│   ├── ocr_pipeline.ipynb  # Main processing pipeline
-│   └── utils.py            # Shared functions
+│   ├── ocr_pipeline.ipynb  # Main processing notebook (4 cells)
+│   └── utils.py            # Helper functions (~1100 lines)
 ├── .env                    # API keys (not versioned)
+├── .env.template           # Template for .env
 ├── .gitignore
 ├── LICENSE
 ├── CITATION.cff
@@ -36,15 +38,39 @@ ocr-zeitschriften-mistral-public/
 ### Data Flow
 
 ```
-[Scanned Files]
-    ↓ (Batch Loading)
-[Image Preprocessing]
-    ↓ (Base64 Encoding)
-[Mistral Pixtral API]
-    ↓ (Vision + OCR)
-[Structure Extraction]
-    ↓ (Markdown Formatting)
-[Output: .txt + .md + .json]
+[Input Files: PDF/JPG/PNG]
+        │
+        ▼
+[File Discovery] ─────────────────────────────┐
+        │                                      │
+        ▼                                      │
+[Large PDF?] ─── Yes ──► [Split into 500-page chunks]
+        │                         │
+        No                        │
+        │◄────────────────────────┘
+        ▼
+[Upload to Mistral Files API]
+        │
+        ▼
+[Get Signed URL]
+        │
+        ▼
+[Mistral OCR API: client.ocr.process()]
+        │
+        ▼
+[Response: pages[] with .markdown]
+        │
+        ▼
+[Combine pages → Full Markdown]
+        │
+        ▼
+[Extract Metadata + Quality Score]
+        │
+        ▼
+[Save: .md + .txt + _metadata.json]
+        │
+        ▼
+[Update SQLite Tracking DB]
 ```
 
 ---
@@ -53,27 +79,57 @@ ocr-zeitschriften-mistral-public/
 
 ### Core Dependencies
 
-- **Mistral AI SDK**: `mistralai` (Pixtral Vision Model)
-- **Image Processing**: `Pillow` (PIL)
-- **PDF Handling**: `PyMuPDF` (fitz) or `pdf2image`
-- **Data Management**: `pandas`, `sqlite3`
+- **Mistral AI SDK**: `mistralai` (OCR API)
+- **PDF Handling**: `PyMuPDF` (fitz) for splitting large PDFs
+- **Data Management**: `sqlite3` (stdlib)
 - **Environment**: `python-dotenv`
 - **Logging**: Python `logging` stdlib
 
 ### API Configuration
 
 ```python
-MODEL = "mistral-ocr-latest"  # Or pixtral-12b-2409
-TEMPERATURE = 0.0  # Deterministic for reproducibility
-MAX_TOKENS = 4096  # For longer articles
-TIMEOUT = 120      # Seconds (Vision API can be slow)
+# Model
+MODEL = "mistral-ocr-latest"  # Dedicated OCR model
+
+# Rate Limiting (configurable via .env)
+DELAY_SECONDS = 2.0      # Delay between API calls
+MAX_RETRIES = 5          # Retry attempts on failure
+TIMEOUT_SECONDS = 120    # API timeout
 ```
 
-### Rate Limiting
+### API Workflow
 
-- **Delay**: 2.0s between API calls (configurable)
-- **Retry Logic**: Exponential backoff (5 attempts)
-- **Checkpoint**: SQLite-based progress tracking
+The pipeline uses Mistral's dedicated OCR API (not the Chat API):
+
+```python
+from mistralai import Mistral
+
+client = Mistral(api_key=MISTRAL_API_KEY)
+
+# 1. Upload PDF file
+uploaded_file = client.files.upload(
+    file={"file_name": "document.pdf", "content": file_bytes},
+    purpose="ocr"
+)
+
+# 2. Get signed URL (valid for 1 hour)
+signed_url = client.files.get_signed_url(
+    file_id=uploaded_file.id,
+    expiry=1
+)
+
+# 3. Process with OCR API
+response = client.ocr.process(
+    model="mistral-ocr-latest",
+    document={"type": "document_url", "document_url": signed_url.url},
+    include_image_base64=True
+)
+
+# 4. Extract results
+for page in response.pages:
+    markdown_text = page.markdown
+    page_index = page.index
+```
 
 ---
 
@@ -81,266 +137,208 @@ TIMEOUT = 120      # Seconds (Vision API can be slow)
 
 ### Input Formats
 
-1. **PDF Files**: Multi-page periodical issues
-   - Conversion to images (page-by-page)
-   - Metadata: Filename, page count, file size
+| Format | Handling |
+|--------|----------|
+| PDF | Upload via Files API → Signed URL → OCR |
+| JPG/JPEG/PNG | Base64 Data-URI → OCR |
 
-2. **JPG/PNG Files**: Single-page scans
-   - Direct processing
-   - Metadata: Filename, resolution, file size
+### PDF Splitting
+
+Large PDFs are automatically split to avoid API limits:
+
+| Trigger | Threshold |
+|---------|-----------|
+| File size | > 50 MB |
+| Page count | > 1000 pages |
+
+**Chunk size**: 500 pages, max 45 MB per chunk
+
+**Storage**: `data/tracking/pdf_chunks/` (temporary, cleaned up after processing)
 
 ### Output Formats
 
 #### 1. Markdown (.md)
+
+Combined output from all pages with page separators:
+
 ```markdown
-# [Periodical Title]
-**Issue**: [Year/Month]
-**Page**: [Page Number]
+# Seite 1
+
+[OCR content from page 1...]
 
 ---
 
-## [Article Heading]
-**Author**: [Name]
+# Seite 2
 
-[Article text with paragraphs...]
-
-### [Subheading]
-[More text...]
+[OCR content from page 2...]
 
 ---
-**Footnotes**:
-1. [Footnote text]
 ```
 
 #### 2. Plain Text (.txt)
-- Structured text output without Markdown syntax
-- Hierarchy via blank lines/indentation
 
-#### 3. Metadata (JSON)
+Same content with Markdown syntax removed.
+
+#### 3. Metadata JSON (_metadata.json)
+
 ```json
 {
-  "scan_id": "periodical_1965_03_p012",
-  "source_file": "periodical_1965_03.pdf",
-  "page_number": 12,
-  "processed_date": "2025-01-16T12:00:00",
-  "structure": {
-    "title": "Article Title",
-    "authors": ["Author 1", "Author 2"],
-    "sections": 3,
-    "footnotes": 5,
-    "word_count": 1234
-  },
-  "confidence": 0.95,
-  "processing_time_sec": 8.3
+  "zeitschrift": "Periodical Title",
+  "ausgabe": "Jahrgang 5, Heft 3",
+  "artikel": ["Article 1", "Article 2"],
+  "autoren": ["Author Name"],
+  "fussnoten_anzahl": 12,
+  "tabellen_anzahl": 2,
+  "word_count": 5432,
+  "total_pages": 24,
+  "api_usage": {
+    "pages_processed": 24
+  }
 }
 ```
 
 ---
 
-## OCR Strategy
-
-### Structure Recognition
-
-Mistral Pixtral identifies the following elements:
-
-1. **Periodical Metadata**
-   - Periodical title
-   - Issue/volume number
-   - Publication date
-   - ISSN (if available)
-
-2. **Table of Contents**
-   - Article overview with page numbers
-   - Author index
-
-3. **Article Structure**
-   - Main heading (H1)
-   - Subheadings (H2, H3)
-   - Author line
-   - Body text with paragraphs
-   - Block quotes
-   - Lists (bulleted/numbered)
-
-4. **Footnotes & References**
-   - Numbering
-   - Association with text passages
-   - Bibliographic details
-
-5. **Special Cases**
-   - Image captions
-   - Tables
-   - Poetry (preserve line breaks)
-   - Multi-column layouts
-
-### Common Challenges for Historical Periodicals
-
-1. **Typography**
-   - Fraktur/Gothic fonts (occasionally in historical citations)
-   - Period-specific typefaces
-   - Variable print quality
-
-2. **Layout**
-   - Multi-column articles
-   - Marginalia and annotations
-   - Changing layouts across issues
-
-3. **Language**
-   - Historical orthography
-   - Period-specific terminology
-   - Abbreviations and sigla
-
----
-
-## Batch Processing & Checkpointing
-
-### SQLite Tracking Schema
+## SQLite Tracking Schema
 
 ```sql
 CREATE TABLE ocr_progress (
     pdf_id TEXT PRIMARY KEY,
     source_file TEXT NOT NULL,
-    page_number INTEGER,
+    total_pages INTEGER,
     status TEXT CHECK(status IN ('pending', 'processing', 'completed', 'error')),
     output_path_md TEXT,
     output_path_txt TEXT,
     metadata_json TEXT,
+    confidence REAL,
+    warnings TEXT,
     error_message TEXT,
     processing_start TIMESTAMP,
     processing_end TIMESTAMP,
-    api_call_duration_sec REAL,
-    confidence REAL,
-    total_pages INTEGER
+    processing_duration_sec REAL,
+    api_pages_used INTEGER,
+    api_bytes_used INTEGER,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-### Batch Strategy
+### Status Flow
 
-1. **Scan Discovery**: Load all PDFs/images from `data/input/`
-2. **PDF → Images**: Convert multi-page PDFs to individual images
-3. **Checkpoint Check**: Skip already-processed scans
-4. **Batch Processing**:
-   - Individual API calls (1 image = 1 call)
-   - Rate limiting with delays
-   - Exponential backoff on errors
-5. **Incremental Save**: Save results after each scan
-6. **Resume Capability**: Automatically resume after interruption
+```
+pending → processing → completed
+                    ↘ error
+```
 
 ---
 
 ## Error Handling
 
-### Error Cases
+### Retry Logic
 
-1. **API Errors**
-   - 429 Rate Limit: Exponential backoff (up to 5 attempts)
-   - 500 Server Error: Retry with backoff
-   - Timeout: Increased timeout limit for large images
+| Error Type | Handling |
+|------------|----------|
+| 429 Rate Limit | Exponential backoff (2s, 4s, 8s, 16s, 32s) |
+| 500/503 Server Error | Exponential backoff |
+| Other errors | Immediate failure, logged to DB |
 
-2. **Image Errors**
-   - Invalid format: Skip with warning
-   - Too large: Downsample before API call
-   - Corrupt: Log error, proceed to next image
+### Error Recovery
 
-3. **OCR Quality Issues**
-   - Confidence score < threshold: Flag for manual review
-   - Incomplete structure: Fallback to plain text
-   - Empty pages: Mark, but don't treat as error
+- **Checkpoint system**: Already-processed files are skipped on restart
+- **Resume**: Re-run Cell 3 to continue after interruption
+- **Manual reset**: Delete entry from SQLite to reprocess a file
 
-### Logging
+---
 
-```python
-import logging
+## Quality Assurance
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('data/tracking/ocr_processing.log'),
-        logging.StreamHandler()
-    ]
-)
+### Confidence Score (0.0 - 1.0)
+
+| Factor | Impact |
+|--------|--------|
+| Word count < 50 | -0.3 |
+| Word count < 150 | -0.1 |
+| No article headings (H2/H3) | -0.2 |
+| No periodical/issue metadata | -0.1 |
+| Many unusual characters (>50) | -0.2 |
+| Articles found | +0.1 |
+| Footnotes found | +0.05 |
+| Tables found | +0.05 |
+
+### Validation Warnings
+
+- Empty OCR output
+- Very short text (<20 words)
+- No structural elements
+- Unpaired Markdown syntax
+- Excessive empty lines
+
+---
+
+## Notebook Structure
+
+### Cell 1: Setup
+
+- Install dependencies
+- Initialize Mistral client
+- Create directories
+- Initialize SQLite database
+- Load configuration from `.env`
+
+### Cell 2: File Discovery
+
+- Scan `data/input/` recursively
+- Collect file metadata (path, type, size)
+- Output: `FILES_TO_PROCESS` list
+
+### Cell 3: Batch OCR Processing
+
+- Loop through files
+- Skip already-completed files (checkpoint)
+- Split large PDFs if needed
+- Process with OCR API
+- Save results and update database
+
+### Cell 4: Cleanup
+
+- Delete temporary PDF chunks
+- Display storage statistics
+- Preserve: database, results, original files
+
+---
+
+## Configuration (.env)
+
+```bash
+# Required
+MISTRAL_API_KEY=your_api_key_here
+
+# Optional (with defaults)
+MISTRAL_MODEL=mistral-ocr-latest
+DELAY_SECONDS=2.0
+MAX_RETRIES=5
+TIMEOUT_SECONDS=120
 ```
 
 ---
 
-## Performance Optimization
+## Performance
 
-### Image Processing
-
-- **Compression**: JPEG quality 85% for API transmission
-- **Resolution**: Max 2048px longest side (balance OCR quality vs. API limits)
-- **Caching**: Cache base64-encoded images on retry
-
-### API Optimization
-
-- **Connection Pooling**: `requests.Session()` for persistent connections
-- **Batch Strategy**: Currently 1 image per call (evaluate multi-image later)
-- **Timeout Tuning**: Dynamic timeout based on image size
-
-### Memory Efficiency
-
-- **Streaming**: Process large PDFs page-by-page
-- **Cleanup**: Delete temp images after processing
-- **Incremental Write**: Write results immediately, don't accumulate in memory
-
----
-
-## Extensibility
-
-### Planned Features (Post-MVP)
-
-1. **Quality Control**
-   - Confidence scoring per page
-   - Automatic duplicate detection
-   - OCR diff tool for manual corrections
-
-2. **Enhanced Metadata**
-   - Named Entity Recognition for authors/organizations
-   - Thematic classification
-   - Linkage with authority files (e.g., GND IDs)
-
-3. **Export Formats**
-   - TEI-XML for digital editions
-   - JSON-LD for Linked Open Data
-   - Full-text search index (Elasticsearch/Whoosh)
-
-4. **UI/Monitoring**
-   - Web dashboard for progress monitoring
-   - Batch job scheduler
-   - Quality review interface
+| Metric | Value |
+|--------|-------|
+| Processing time per page | 5-15 seconds |
+| Rate with delay | ~30-40 pages/minute |
+| 1000 pages | ~25-40 minutes |
+| Estimated cost | ~$1 USD per 1000 pages |
 
 ---
 
 ## Security & Privacy
 
-### API Keys
-
-- `.env` file (not versioned)
-- Environment variable: `MISTRAL_API_KEY`
-- No hard-coded keys in code
-
-### Data Handling
-
-- **Input**: Scans remain local (sent to Mistral API only for OCR)
-- **Privacy**: Check copyright status of historical periodicals
-- **Backup**: Regular backups of `data/output/` and `data/tracking/`
-
----
-
-## Testing Strategy
-
-### MVP Testing
-
-1. **Sample Set**: 10-20 representative pages
-2. **Manual Validation**: OCR accuracy vs. ground truth
-3. **Structure Check**: Markdown rendering in viewer
-4. **Edge Cases**: Tables, poetry, multi-column layouts
-
-### Production Readiness
-
-- Error Rate < 5%
-- OCR Accuracy > 95% (Character Error Rate)
-- Processing Time < 15s per page (average)
+- API keys stored in `.env` (not versioned)
+- Files uploaded temporarily to Mistral for OCR
+- Signed URLs expire after 1 hour
+- Original files remain local
 
 ---
 
@@ -348,11 +346,9 @@ logging.basicConfig(
 
 **Institution**: BBF | Research Library for the History of Education in Berlin
 
-**License**: MIT License (see LICENSE file)
-
-**Citation**: See CITATION.cff for structured citation metadata
+**License**: MIT License
 
 ---
 
-**Last Updated**: 2025-01-16
-**Version**: 1.0.0
+**Last Updated**: 2025-12-19
+**Version**: 1.1.0
