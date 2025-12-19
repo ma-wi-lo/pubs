@@ -1,333 +1,272 @@
-# OCR Pipeline: LLM Workflow & Prompt Engineering
+# OCR Pipeline: API Workflow & Post-Processing
 
 ## Overview
 
-This document describes the interaction with the Mistral Pixtral Vision Model for structured OCR processing of historical print periodicals.
+This document describes the interaction with the Mistral OCR API (`mistral-ocr-latest`) and the post-processing steps for structured text extraction from historical print periodicals.
 
 ---
 
-## Mistral Pixtral Model
+## Mistral OCR API
 
-### Specifications
+### API Specifications
 
-- **Model ID**: `mistral-ocr-latest` (or `pixtral-12b-2409`)
-- **Type**: Vision-Language Model (VLM)
-- **Capabilities**:
-  - Optical Character Recognition (OCR)
-  - Layout analysis
-  - Structure recognition
-  - Multilingual text recognition
-- **Input**: Base64-encoded images (JPEG, PNG)
-- **Output**: Structured text (Markdown, JSON)
+- **Endpoint**: `client.ocr.process()`
+- **Model**: `mistral-ocr-latest`
+- **Type**: Dedicated OCR API (not Chat/Vision API)
+- **Input**: PDF files (via signed URL) or images (via Base64 Data-URI)
+- **Output**: Structured response with `pages[]` containing `.markdown` per page
 
-### API Configuration
+### Key Difference from Chat API
+
+The OCR API is a **dedicated document processing endpoint**:
+- No prompt engineering required
+- No temperature or max_tokens parameters
+- Returns structured page-by-page results
+- Automatic layout analysis and text extraction
+
+---
+
+## API Workflow
+
+### Step 1: File Upload (PDFs only)
 
 ```python
 from mistralai import Mistral
 
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+client = Mistral(api_key=MISTRAL_API_KEY)
 
-response = client.chat.complete(
+# Upload PDF to Mistral Files API
+with open(pdf_path, 'rb') as f:
+    uploaded_file = client.files.upload(
+        file={
+            "file_name": Path(pdf_path).name,
+            "content": f
+        },
+        purpose="ocr"
+    )
+
+print(f"Uploaded: {uploaded_file.id}")
+```
+
+### Step 2: Get Signed URL
+
+```python
+# Get temporary signed URL (valid for 1 hour)
+signed_url_response = client.files.get_signed_url(
+    file_id=uploaded_file.id,
+    expiry=1  # Hours
+)
+
+document_url = signed_url_response.url
+```
+
+### Step 3: OCR Processing
+
+```python
+# Process document with OCR API
+response = client.ocr.process(
     model="mistral-ocr-latest",
-    messages=[
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": PROMPT},
-                {"type": "image_url", "image_url": f"data:image/jpeg;base64,{base64_image}"}
-            ]
-        }
-    ],
-    temperature=0.0,      # Deterministic
-    max_tokens=4096,      # For longer articles
-    response_format={"type": "text"}  # Markdown output
+    document={
+        "type": "document_url",
+        "document_url": document_url
+    },
+    include_image_base64=True  # Include embedded images
+)
+```
+
+### Step 4: Extract Results
+
+```python
+# Response structure
+for page in response.pages:
+    page_number = page.index + 1  # 0-indexed
+    markdown_content = page.markdown
+    # Optional: page.images (if include_image_base64=True)
+```
+
+---
+
+## Image Processing (JPG/PNG)
+
+For single images, use Base64 Data-URI instead of file upload:
+
+```python
+import base64
+
+# Read and encode image
+with open(image_path, 'rb') as f:
+    base64_data = base64.b64encode(f.read()).decode('utf-8')
+
+# Determine MIME type
+mime_types = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png'
+}
+media_type = mime_types[Path(image_path).suffix.lower()]
+
+# Process with OCR API
+response = client.ocr.process(
+    model="mistral-ocr-latest",
+    document={
+        "type": "image_url",
+        "image_url": f"data:{media_type};base64,{base64_data}"
+    }
 )
 ```
 
 ---
 
-## Prompt Design
+## Response Structure
 
-### Base Prompt: Structured OCR
-
-```markdown
-You are a specialized OCR assistant for historical print periodicals.
-
-TASK:
-Extract all text from the provided periodical scan while preserving structural hierarchy.
-
-OUTPUT FORMAT: Markdown with the following structure:
-
-# [Periodical Title]
-**Issue**: [Year/Month/Number]
-**Page**: [Page Number]
-
----
-
-## Table of Contents
-(Only if present on this page)
-- [Article Title] - Page X
-- [Article Title] - Page Y
-
----
-
-## [Article Heading]
-**Author**: [First Name Last Name]
-
-[Article text - paragraphs separated by blank lines]
-
-### [Subheading if present]
-
-[More text...]
-
----
-
-**Footnotes**:
-1. [Footnote text]
-2. [Footnote text]
-
----
-
-CRITICAL RULES:
-
-1. **Text Accuracy**:
-   - Preserve ALL words exactly as printed
-   - No modernization of historical orthography
-   - Keep period-specific terminology unchanged
-   - Retain hyphens and syllable breaks
-
-2. **Structure Recognition**:
-   - Main headings as H2 (##)
-   - Subheadings as H3 (###)
-   - Author lines in bold (**Author**: ...)
-   - Numbered footnotes at end
-
-3. **Layout Specifics**:
-   - Multi-column layouts: Read left to right, column by column
-   - Marginalia: As blockquote (> ...)
-   - Image captions: *Italic*
-   - Tables: As Markdown tables
-
-4. **Special Cases**:
-   - Poetry: Preserve line breaks with double space at line end
-   - Quotes: As blockquote (> ...)
-   - Lists: As Markdown lists
-
-5. **Uncertainty**:
-   - Illegible words: [illegible]
-   - Uncertain reading: [possibly: word]
-   - Missing page number: [page number not visible]
-
-6. **Metadata Extraction**:
-   - Periodical title from header
-   - Issue/volume from title page or header
-   - Page number from footer or header
-   - Author from article head or signature
-
-IMPORTANT: Focus on accuracy over speed. Take special care with Gothic fonts or hard-to-read sections.
-
-Begin OCR processing of the provided scan now.
-```
-
----
-
-## Extended Prompts
-
-### Prompt for Table of Contents
-
-```markdown
-You are a specialized OCR assistant for historical periodicals.
-
-SPECIAL TASK: Table of Contents Extraction
-
-Extract the table of contents from the scan and structure it as a Markdown table:
-
-| Title | Author(s) | Page |
-|-------|-----------|------|
-| [Article Title 1] | [Name] | XX |
-| [Article Title 2] | [Name 1, Name 2] | YY |
-
-RULES:
-- Preserve titles exactly as printed
-- Multiple authors: comma-separated
-- If no author listed: "-"
-- Page numbers as numbers (no "p." or "page")
-
-Additionally: Extract issue metadata:
-- Periodical title
-- Volume/issue number
-- Publication date
-- ISSN (if available)
-
-Output as structured JSON:
-
-{
-  "periodical": "Title",
-  "issue": "Vol X/Year",
-  "date": "Month Year",
-  "issn": "XXXX-XXXX",
-  "contents": [
-    {"title": "...", "authors": ["..."], "page": XX},
-    ...
-  ]
-}
-```
-
-### Prompt for Metadata Extraction
-
-```markdown
-SPECIAL TASK: Metadata Extraction
-
-Analyze the scan and extract the following metadata as JSON:
-
-{
-  "page_type": "cover|contents|article|imprint|advertisement",
-  "periodical_title": "...",
-  "issue": "...",
-  "page_number": XX,
-  "article": {
-    "title": "...",
-    "authors": ["First Last", ...],
-    "subtitle": "...",
-    "summary": "First 2-3 sentences of article"
-  },
-  "structural_elements": {
-    "headings": ["H2 Title", "H3 Subtitle"],
-    "footnote_count": X,
-    "image_count": X,
-    "table_count": X
-  },
-  "readability": {
-    "print_quality": "good|medium|poor",
-    "illegible_areas": ["Description of issues"],
-    "special_features": ["Gothic font", "Multi-column", ...]
-  }
-}
-
-If information is not visible, use `null`.
-```
-
----
-
-## Prompt Strategies for Challenges
-
-### Gothic/Fraktur Fonts
-
-```markdown
-NOTE: This scan contains Gothic/Fraktur script.
-
-Pay attention to typical Fraktur characteristics:
-- Long ſ (s) vs. round s
-- Ligatures: ſt, ch, ck, tz
-- Confusion risk: r/n, u/n, s/f
-
-If uncertain: mark as [Fraktur: uncertain].
-```
-
-### Multi-Column Layouts
-
-```markdown
-LAYOUT: This scan has a multi-column layout.
-
-READING ORDER:
-1. Left column completely from top to bottom
-2. Right column completely from top to bottom
-3. For 3+ columns: left to right
-
-Do NOT mark column transitions - create continuous flowing text.
-```
-
-### Poor Scan Quality
-
-```markdown
-NOTE: This scan has low print quality.
-
-STRATEGY:
-- Use context for illegible words
-- Mark truly illegible spots as [illegible]
-- When uncertain: [possibly: word?]
-- Don't guess - better to mark than transcribe incorrectly
-```
-
----
-
-## Response Parsing
-
-### Markdown Extraction
+### OCRResponse Object
 
 ```python
-def parse_ocr_response(response: dict) -> tuple[str, str]:
-    """
-    Extracts Markdown and plain text from Mistral response.
+response.pages  # List of Page objects
+```
 
-    Returns:
-        (markdown_text, plain_text)
-    """
-    content = response.choices[0].message.content
+### Page Object
 
-    # Use Markdown directly
-    markdown_text = content.strip()
+| Attribute | Type | Description |
+|-----------|------|-------------|
+| `index` | int | Page number (0-indexed) |
+| `markdown` | str | OCR text in Markdown format |
+| `images` | list | Embedded images (if requested) |
 
-    # Plain text: Remove Markdown syntax
-    plain_text = markdown_to_plaintext(markdown_text)
+### Example Output
 
-    return markdown_text, plain_text
+The OCR API returns Markdown with automatic structure detection:
 
-def markdown_to_plaintext(md: str) -> str:
-    """Converts Markdown to plain text."""
-    import re
+```markdown
+## Artikel-Überschrift
 
-    # Remove Markdown syntax
-    text = re.sub(r'^#+\s+', '', md, flags=re.MULTILINE)  # Headers
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # Bold
-    text = re.sub(r'\*(.+?)\*', r'\1', text)  # Italic
-    text = re.sub(r'^\>\s+', '', text, flags=re.MULTILINE)  # Blockquotes
-    text = re.sub(r'^\-\s+', '', text, flags=re.MULTILINE)  # Lists
-    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)  # Numbered lists
-    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)  # Links
-    text = re.sub(r'---+', '', text)  # Horizontal rules
+**Von Hans Müller**
+
+Lorem ipsum dolor sit amet, consectetur adipiscing elit.
+Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.
+
+### Unterabschnitt
+
+Weitere Textinhalte...
+
+---
+
+1. Fußnote mit Quellenangabe
+2. Weitere Fußnote
+```
+
+---
+
+## Post-Processing
+
+### Combine Pages to Document
+
+```python
+def combine_pages_to_markdown(pages: list) -> str:
+    """Combines multiple pages into a single Markdown document."""
+    markdown_parts = []
+
+    for page in pages:
+        markdown_parts.append(f"# Seite {page.index + 1}\n")
+        markdown_parts.append(page.markdown)
+        markdown_parts.append("\n\n---\n\n")
+
+    return "\n".join(markdown_parts)
+```
+
+### Convert to Plain Text
+
+```python
+import re
+
+def markdown_to_plaintext(markdown: str) -> str:
+    """Removes Markdown syntax for plain text output."""
+    text = markdown
+
+    # Remove headers
+    text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
+    # Remove bold
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    # Remove italic
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    # Remove blockquotes
+    text = re.sub(r'^\>\s+', '', text, flags=re.MULTILINE)
+    # Remove list markers
+    text = re.sub(r'^\-\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
+    # Remove links
+    text = re.sub(r'\[(.+?)\]\(.+?\)', r'\1', text)
+    # Remove horizontal rules
+    text = re.sub(r'---+', '', text)
 
     return text.strip()
 ```
 
-### Metadata Extraction
+---
+
+## Metadata Extraction
+
+The pipeline extracts structured metadata from OCR output using regex patterns optimized for German historical periodicals:
+
+### Extraction Patterns
 
 ```python
-def extract_metadata_from_markdown(md: str) -> dict:
-    """
-    Extracts structured metadata from Markdown OCR output.
-    """
-    import re
-
+def extract_metadata_from_markdown(markdown: str) -> dict:
     metadata = {}
 
     # Periodical title (first H1)
-    match = re.search(r'^#\s+(.+)$', md, re.MULTILINE)
+    match = re.search(r'^#\s+(.+)$', markdown, re.MULTILINE)
     if match:
-        metadata['periodical'] = match.group(1).strip()
+        metadata['zeitschrift'] = match.group(1).strip()
 
-    # Issue
-    match = re.search(r'\*\*Issue\*\*:\s*(.+)$', md, re.MULTILINE)
+    # Issue/Volume (German patterns)
+    match = re.search(
+        r'(Jahrgang|Heft|Ausgabe|Nr\.?)\s*(\d+)',
+        markdown,
+        re.IGNORECASE
+    )
     if match:
-        metadata['issue'] = match.group(1).strip()
+        metadata['ausgabe'] = match.group(0).strip()
 
     # Page number
-    match = re.search(r'\*\*Page\*\*:\s*(\d+)', md, re.MULTILINE)
+    match = re.search(r'Seite\s*(\d+)', markdown, re.IGNORECASE)
     if match:
-        metadata['page'] = int(match.group(1))
+        metadata['seite'] = int(match.group(1))
 
-    # Article titles (all H2)
-    metadata['articles'] = re.findall(r'^##\s+(.+)$', md, re.MULTILINE)
+    # Article titles (H2 and H3)
+    h2_titles = re.findall(r'^##\s+(.+)$', markdown, re.MULTILINE)
+    h3_titles = re.findall(r'^###\s+(.+)$', markdown, re.MULTILINE)
+    metadata['artikel'] = h2_titles + h3_titles
 
-    # Authors
-    metadata['authors'] = re.findall(r'\*\*Author\*\*:\s*(.+)$', md, re.MULTILINE)
+    # Authors (multiple patterns)
+    autoren = []
+    # Pattern: "Von [Name]" or "Autor: [Name]"
+    autoren.extend(re.findall(
+        r'(?:Von|Autor|Author):\s*([A-ZÄÖÜ][^\n]+)',
+        markdown
+    ))
+    # Pattern: Name signatures at end of text
+    autoren.extend(re.findall(
+        r'\n\s*([A-ZÄÖÜ][a-zäöüß]+\s+[A-ZÄÖÜ][a-zäöüß]+)\s*$',
+        markdown,
+        re.MULTILINE
+    ))
+    metadata['autoren'] = list(set(autoren))
 
     # Count footnotes
-    metadata['footnote_count'] = len(re.findall(r'^\d+\.\s+.+$', md, re.MULTILINE))
+    metadata['fussnoten_anzahl'] = len(
+        re.findall(r'^\d+\.\s+.+$', markdown, re.MULTILINE)
+    )
 
-    # Count words
-    text = markdown_to_plaintext(md)
-    metadata['word_count'] = len(text.split())
+    # Count tables
+    table_lines = re.findall(r'^\|.+\|$', markdown, re.MULTILINE)
+    metadata['tabellen_anzahl'] = len(
+        [l for l in table_lines if '---' not in l]
+    ) // 2
+
+    # Word count
+    plain_text = markdown_to_plaintext(markdown)
+    metadata['word_count'] = len(plain_text.split())
 
     return metadata
 ```
@@ -336,37 +275,42 @@ def extract_metadata_from_markdown(md: str) -> dict:
 
 ## Quality Assurance
 
-### Confidence Scoring
+### Confidence Score Calculation
 
 ```python
 def calculate_ocr_confidence(markdown: str, metadata: dict) -> float:
     """
-    Calculates a confidence score for OCR quality (0.0-1.0).
+    Calculates confidence score (0.0 - 1.0) based on output quality.
     """
     score = 1.0
 
-    # Penalty: Many [illegible] marks
-    illegible_count = markdown.count('[illegible]')
-    score -= min(0.3, illegible_count * 0.05)
+    # Penalties
+    word_count = metadata.get('word_count', 0)
+    if word_count < 50:
+        score -= 0.3  # Very short text
+    elif word_count < 150:
+        score -= 0.1  # Short text
 
-    # Penalty: Many [possibly: ...] marks
-    possibly_count = markdown.count('[possibly:')
-    score -= min(0.2, possibly_count * 0.03)
+    if not metadata.get('artikel'):
+        score -= 0.2  # No structure
 
-    # Penalty: Missing metadata
-    if not metadata.get('periodical'):
-        score -= 0.1
-    if not metadata.get('page'):
-        score -= 0.1
+    if not metadata.get('zeitschrift') and not metadata.get('ausgabe'):
+        score -= 0.1  # Missing metadata
 
-    # Penalty: Very short text (likely error)
-    if metadata.get('word_count', 0) < 50:
+    # Penalty for OCR artifacts (unusual characters)
+    unusual_chars = len(re.findall(
+        r'[^\w\s\.,;:!?\-äöüÄÖÜß()"\'\[\]]',
+        markdown
+    ))
+    if unusual_chars > 50:
         score -= 0.2
 
-    # Bonus: Structured elements found
-    if metadata.get('articles'):
+    # Bonuses
+    if metadata.get('artikel'):
+        score += 0.1
+    if metadata.get('fussnoten_anzahl', 0) > 0:
         score += 0.05
-    if metadata.get('footnote_count', 0) > 0:
+    if metadata.get('tabellen_anzahl', 0) > 0:
         score += 0.05
 
     return max(0.0, min(1.0, score))
@@ -375,41 +319,126 @@ def calculate_ocr_confidence(markdown: str, metadata: dict) -> float:
 ### Validation Checks
 
 ```python
-def validate_ocr_output(markdown: str, metadata: dict) -> list[str]:
+def validate_ocr_output(markdown: str, metadata: dict) -> list:
     """
     Checks OCR output for common issues.
-
-    Returns:
-        List of warnings
+    Returns list of warnings.
     """
     warnings = []
 
-    # Check: Empty output
+    # Empty output
     if not markdown.strip():
         warnings.append("ERROR: Empty OCR output")
 
-    # Check: Very short text
+    # Very short text
     word_count = metadata.get('word_count', 0)
     if word_count < 20:
         warnings.append(f"WARN: Very little text ({word_count} words)")
 
-    # Check: No structure recognized
+    # No structure
     if '##' not in markdown and '**' not in markdown:
         warnings.append("WARN: No structural elements recognized")
 
-    # Check: Missing metadata
-    if not metadata.get('page'):
-        warnings.append("WARN: Page number not recognized")
-
-    # Check: High uncertainty
-    if markdown.count('[illegible]') > 5:
-        warnings.append("WARN: Many illegible areas (>5)")
-
-    # Check: Markdown syntax errors
+    # Markdown syntax errors
     if markdown.count('**') % 2 != 0:
         warnings.append("WARN: Unpaired ** in Markdown")
 
+    # Excessive empty lines (possible layout issues)
+    empty_lines = len(re.findall(r'\n\s*\n\s*\n', markdown))
+    if empty_lines > 20:
+        warnings.append(
+            f"WARN: Many empty lines ({empty_lines}), possible structure issues"
+        )
+
     return warnings
+```
+
+---
+
+## Retry Logic
+
+### Exponential Backoff
+
+```python
+def process_pdf_with_retry(
+    pdf_path: str,
+    api_key: str,
+    max_retries: int = 5,
+    base_delay: float = 2.0
+) -> dict:
+    """Process PDF with automatic retry on failure."""
+
+    for attempt in range(max_retries):
+        try:
+            return process_pdf_with_ocr(pdf_path, api_key)
+
+        except Exception as e:
+            error_str = str(e)
+
+            # Rate limit (429)
+            if '429' in error_str:
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Rate limit, waiting {delay}s...")
+                    time.sleep(delay)
+                    continue
+
+            # Server error (500, 503)
+            elif any(code in error_str for code in ['500', '503']):
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"Server error, waiting {delay}s...")
+                    time.sleep(delay)
+                    continue
+
+            # Other errors: fail immediately
+            raise
+
+    raise ValueError(f"All {max_retries} attempts failed")
+```
+
+---
+
+## Output Files
+
+### File Naming
+
+```
+{pdf_stem}.md           # Markdown with structure
+{pdf_stem}.txt          # Plain text
+{pdf_stem}_metadata.json  # Extracted metadata
+```
+
+### Save Results
+
+```python
+def save_ocr_results(
+    pdf_id: str,
+    markdown: str,
+    plain_text: str,
+    metadata: dict,
+    output_dir: str
+) -> tuple:
+    """Saves OCR results to files."""
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Markdown
+    md_path = os.path.join(output_dir, f"{pdf_id}.md")
+    with open(md_path, 'w', encoding='utf-8') as f:
+        f.write(markdown)
+
+    # Plain text
+    txt_path = os.path.join(output_dir, f"{pdf_id}.txt")
+    with open(txt_path, 'w', encoding='utf-8') as f:
+        f.write(plain_text)
+
+    # Metadata JSON
+    json_path = os.path.join(output_dir, f"{pdf_id}_metadata.json")
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+    return md_path, txt_path
 ```
 
 ---
@@ -417,148 +446,106 @@ def validate_ocr_output(markdown: str, metadata: dict) -> list[str]:
 ## Workflow Diagram
 
 ```
-┌─────────────────┐
-│  Scan File      │
-│  (PDF/JPG)      │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Image Prep      │
-│ - Load          │
-│ - Resize        │
-│ - Base64 Encode │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Mistral Pixtral │
-│ API Call        │
-│ + Prompt        │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Parse Response  │
-│ - Markdown      │
-│ - Metadata      │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Quality Check   │
-│ - Confidence    │
-│ - Validation    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Save Output     │
-│ - .md File      │
-│ - .txt File     │
-│ - JSON Metadata │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Update Tracking │
-│ (SQLite)        │
-└─────────────────┘
+┌─────────────────────┐
+│  Input File         │
+│  (PDF / JPG / PNG)  │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  PDF?               │
+│  ├─ Yes → Upload    │
+│  │        → Signed URL
+│  └─ No  → Base64    │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  Mistral OCR API    │
+│  client.ocr.process │
+│  (no prompts)       │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  Response:          │
+│  pages[].markdown   │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  Combine Pages      │
+│  → Full Markdown    │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  Post-Processing    │
+│  ├─ → Plain Text    │
+│  ├─ → Metadata      │
+│  └─ → Confidence    │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  Quality Validation │
+│  → Warnings List    │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  Save Files         │
+│  ├─ .md             │
+│  ├─ .txt            │
+│  └─ _metadata.json  │
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│  Update SQLite DB   │
+│  (Tracking)         │
+└─────────────────────┘
 ```
 
 ---
 
-## Iterative Improvement
+## Performance Expectations
 
-### Prompt Tuning Strategy
+| Metric | Value |
+|--------|-------|
+| Processing time per page | 5-15 seconds |
+| Throughput with 2s delay | ~30-40 pages/minute |
+| 1000 pages total time | ~25-40 minutes |
+| OCR accuracy (good scans) | 90-95% CAR |
+| Structure recognition | >95% |
 
-1. **Baseline**: 10-20 test scans with base prompt
-2. **Manual Review**: Compare OCR vs. original
-3. **Error Analysis**: Categorize errors
-   - Structure errors (incorrect hierarchy)
-   - Text errors (wrong characters)
-   - Layout errors (column order)
-   - Metadata errors (missing extraction)
-4. **Prompt Adjustment**: Specific instructions for common errors
-5. **A/B Testing**: Compare old vs. new prompt
-6. **Production**: Roll out at >95% accuracy
+---
 
-### Feedback Loop
+## Troubleshooting
+
+### Common Issues
+
+| Issue | Solution |
+|-------|----------|
+| Rate limit (429) | Increase `DELAY_SECONDS` in .env |
+| Timeout | Increase `TIMEOUT_SECONDS` in .env |
+| Low confidence | Check scan quality, verify periodical format |
+| Missing metadata | Adjust regex patterns for specific periodical |
+
+### Debugging
 
 ```python
-def log_ocr_feedback(scan_id: str, issue_type: str, description: str):
-    """
-    Logs manual corrections for prompt improvement.
-    """
-    with sqlite3.connect('data/tracking/ocr_feedback.db') as conn:
-        conn.execute("""
-            INSERT INTO feedback (scan_id, issue_type, description, timestamp)
-            VALUES (?, ?, ?, ?)
-        """, (scan_id, issue_type, description, datetime.now()))
+# Enable detailed logging
+import logging
+logging.getLogger('mistralai').setLevel(logging.DEBUG)
+
+# Check response structure
+print(f"Pages: {len(response.pages)}")
+for page in response.pages:
+    print(f"Page {page.index}: {len(page.markdown)} chars")
 ```
 
 ---
 
-## Best Practices
-
-1. **Temperature 0.0**: Deterministic behavior for reproducibility
-2. **Large max_tokens**: 4096+ for longer articles (better too much than truncated)
-3. **Increase timeout**: Vision API slower than text-only (120s instead of 60s)
-4. **Rate limiting**: 2.0s delay between calls (Mistral API limits)
-5. **Error handling**: Exponential backoff for 429/500 errors
-6. **Logging**: Detailed logs for debugging (request ID, processing time)
-7. **Checkpoint**: Save after each scan (resumable after interruption)
-8. **Manual review**: Spot-check results (min. 5% of scans)
-
----
-
-## Expected Performance
-
-### Processing Time
-
-- **Single page**: 5-15 seconds (depending on complexity)
-- **Rate limiting**: 2.0s delay → ~30-40 pages/minute
-- **1000 pages**: ~25-40 minutes pure processing time
-
-### OCR Accuracy
-
-- **Target**: >95% Character Accuracy Rate (CAR)
-- **Realistic**: 90-95% for good-quality scans
-- **Challenges**: Gothic fonts, poor scans → 80-90%
-
-### Structure Recognition
-
-- **Headings**: >95% accuracy
-- **Authors**: >90% accuracy
-- **Footnotes**: >85% accuracy (often challenging)
-- **Multi-column layouts**: 80-90% correct order
-
----
-
-## Production Monitoring
-
-### Key Metrics to Track
-
-```python
-{
-  "total_pages_processed": 1500,
-  "avg_processing_time_sec": 8.3,
-  "avg_confidence_score": 0.93,
-  "error_rate": 0.02,
-  "estimated_cost_usd": 1.50
-}
-```
-
-### Quality Assurance Checklist
-
-- [ ] Spot-check 5% of processed pages manually
-- [ ] Verify metadata extraction accuracy
-- [ ] Check structure preservation (headings, footnotes)
-- [ ] Validate text accuracy against sample
-- [ ] Review flagged low-confidence outputs
-- [ ] Document any systematic errors for prompt tuning
-
----
-
-**Last Updated**: 2025-01-16
-**Version**: 1.0.0
+**Last Updated**: 2025-12-19
+**Version**: 1.1.0
