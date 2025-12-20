@@ -123,7 +123,10 @@ response = client.ocr.process(
 
 ```python
 response.pages  # List of Page objects
+response.model  # Actual model used (e.g., "mistral-ocr-2512")
 ```
+
+**Important:** When using `mistral-ocr-latest`, the `response.model` field reveals the actual model version. This is logged and saved in metadata for reproducibility.
 
 ### Page Object
 
@@ -547,5 +550,5 @@ for page in response.pages:
 
 ---
 
-**Last Updated**: 2025-12-19
-**Version**: 1.1.0
+**Last Updated**: 2025-12-20
+**Version**: 1.2.0

@@ -299,9 +299,12 @@ def process_pdf_with_ocr(
         processing_time = time.time() - start_time
 
         # Extrahiere Ergebnisse
-        # Note: OCRResponse hat kein 'usage' Attribut, nur pages
+        # Response enthält: pages, model, usage_info (optional)
+        actual_model = getattr(response, 'model', model)  # Fallback auf request model
+
         result = {
             'pages': response.pages,
+            'model': actual_model,  # Tatsächlich verwendetes Modell (z.B. mistral-ocr-2512)
             'usage': {
                 'pages_processed': len(response.pages),
                 'document_size_bytes': 0  # Nicht verfügbar in OCR Response
@@ -312,6 +315,7 @@ def process_pdf_with_ocr(
 
         logger.info(
             f"OCR erfolgreich: {result['total_pages']} Seiten, "
+            f"Modell: {actual_model}, "
             f"{processing_time:.2f}s"
         )
 
@@ -923,6 +927,7 @@ def process_single_pdf(
         # Extrahiere Metadaten
         metadata = extract_metadata_from_markdown(full_markdown)
         metadata['total_pages'] = result['total_pages']
+        metadata['model'] = result['model']  # Tatsächlich verwendetes Modell
         metadata['api_usage'] = result['usage']
 
         # Quality Checks

@@ -21,9 +21,8 @@ ocr-zeitschriften-mistral-public/
 │   ├── output/             # OCR results (.md, .txt, .json)
 │   └── tracking/           # SQLite database + temporary PDF chunks
 ├── docs/
-│   ├── ARCHITECTURE.md     # This file
-│   ├── CODING_INSTRUCTIONS.md  # Development guidelines
-│   └── PIPELINE_REVIEW.md  # Code review documentation
+│   ├── ARCHITECTURE.md     # This file (system architecture)
+│   └── LLM_WORKFLOW.md     # API workflow & post-processing
 ├── notebooks/
 │   ├── ocr_pipeline.ipynb  # Main processing notebook (4 cells)
 │   └── utils.py            # Helper functions (~1100 lines)
@@ -191,11 +190,14 @@ Same content with Markdown syntax removed.
   "tabellen_anzahl": 2,
   "word_count": 5432,
   "total_pages": 24,
+  "model": "mistral-ocr-2512",
   "api_usage": {
     "pages_processed": 24
   }
 }
 ```
+
+**Note:** The `model` field shows the actual model used (e.g., `mistral-ocr-2512`), not the alias (`mistral-ocr-latest`). This enables tracking which model version processed each document.
 
 ---
 
@@ -350,5 +352,5 @@ TIMEOUT_SECONDS=120
 
 ---
 
-**Last Updated**: 2025-12-19
-**Version**: 1.1.0
+**Last Updated**: 2025-12-20
+**Version**: 1.2.0
