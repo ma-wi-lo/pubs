@@ -299,15 +299,16 @@ def process_pdf_with_ocr(
         processing_time = time.time() - start_time
 
         # Extrahiere Ergebnisse
-        # Response enthält: pages, model, usage_info (optional)
+        # Response enthält: pages, model, usage_info
         actual_model = getattr(response, 'model', model)  # Fallback auf request model
+        usage_info = getattr(response, 'usage_info', None)
 
         result = {
             'pages': response.pages,
             'model': actual_model,  # Tatsächlich verwendetes Modell (z.B. mistral-ocr-2512)
             'usage': {
-                'pages_processed': len(response.pages),
-                'document_size_bytes': 0  # Nicht verfügbar in OCR Response
+                'pages_processed': getattr(usage_info, 'pages_processed', len(response.pages)) if usage_info else len(response.pages),
+                'document_size_bytes': getattr(usage_info, 'doc_size_bytes', 0) if usage_info else 0
             },
             'processing_time': processing_time,
             'total_pages': len(response.pages)
@@ -316,6 +317,7 @@ def process_pdf_with_ocr(
         logger.info(
             f"OCR erfolgreich: {result['total_pages']} Seiten, "
             f"Modell: {actual_model}, "
+            f"{result['usage']['document_size_bytes'] / 1024:.1f} KB, "
             f"{processing_time:.2f}s"
         )
 

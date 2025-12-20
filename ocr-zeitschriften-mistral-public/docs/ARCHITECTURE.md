@@ -192,7 +192,8 @@ Same content with Markdown syntax removed.
   "total_pages": 24,
   "model": "mistral-ocr-2512",
   "api_usage": {
-    "pages_processed": 24
+    "pages_processed": 24,
+    "document_size_bytes": 3002783
   }
 }
 ```
